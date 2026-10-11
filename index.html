@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#14110f">
+<title>Face Shuffle</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,800&display=swap">
+<style>
+  /* One full-screen camera view, controls in a bar along the bottom (thumb reach). Dark only: it is a viewfinder. */
+  :root {
+    --bg: #14110f;
+    --fg: #f6efe6;
+    --muted: #b3a89b;
+    --accent: #ff7a3d;
+    --accent-ink: #1d0e05;
+    --chip: rgba(20, 17, 15, .62);
+    --display: "Bricolage Grotesque", system-ui, -apple-system, "Segoe UI", sans-serif;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+    overflow: hidden; touch-action: manipulation; -webkit-user-select: none; user-select: none;
+  }
+  #stage { position: fixed; inset: 0; display: grid; place-items: center; }
+  #out { width: 100%; height: 100%; object-fit: cover; }
+  #out.mirror { transform: scaleX(-1); }
+  video { display: none; }
+
+  #status {
+    position: fixed; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 14px); transform: translateX(-50%);
+    background: var(--chip); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    padding: 6px 14px; border-radius: 999px; font-size: 13px; color: var(--muted); white-space: nowrap;
+  }
+  #status:empty { display: none; }
+
+  #bar {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    padding: 16px 16px calc(env(safe-area-inset-bottom, 0px) + 20px);
+    display: flex; align-items: center; justify-content: center; gap: 22px;
+    background: linear-gradient(to top, rgba(20,17,15,.75), rgba(20,17,15,0));
+  }
+  button { font: inherit; color: inherit; border: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  button:focus-visible { outline: 3px solid var(--fg); outline-offset: 3px; }
+  .round {
+    width: 52px; height: 52px; border-radius: 50%; background: var(--chip);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    display: grid; place-items: center;
+  }
+  .round svg { width: 24px; height: 24px; stroke: var(--fg); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .round:disabled { opacity: .4; }
+  #shuffle {
+    width: 92px; height: 92px; border-radius: 50%;
+    background: var(--accent); color: var(--accent-ink);
+    font-family: var(--display); font-weight: 800; font-size: 17px; letter-spacing: .02em;
+    box-shadow: 0 0 0 5px rgba(255,122,61,.28);
+    transition: transform .12s ease;
+  }
+  #shuffle:active { transform: scale(.93); }
+  #shuffle:disabled { opacity: .45; }
+
+  #intro {
+    position: fixed; inset: 0; display: grid; place-items: center; padding: 24px 16px; text-align: center;
+    background: radial-gradient(120% 80% at 50% 30%, #2a1f17 0%, var(--bg) 70%);
+  }
+  #intro h1 {
+    font-family: var(--display); font-weight: 800; font-size: clamp(44px, 14vw, 88px);
+    line-height: .92; margin: 0 0 14px; letter-spacing: -.02em; text-wrap: balance;
+  }
+  #intro h1 span { color: var(--accent); }
+  #intro p { color: var(--muted); max-width: 30ch; margin: 0 auto 28px; }
+  #go {
+    background: var(--accent); color: var(--accent-ink); font-family: var(--display); font-weight: 800;
+    font-size: 18px; padding: 16px 30px; border-radius: 999px;
+  }
+  #err { color: #ffb08a; margin-top: 18px; max-width: 34ch; margin-inline: auto; }
+  #err:empty { display: none; }
+  @media (prefers-reduced-motion: reduce) { #shuffle { transition: none; } }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="out"></canvas></div>
+<video id="cam" playsinline muted autoplay></video>
+<div id="status" role="status"></div>
+
+<div id="bar" hidden>
+  <button class="round" id="reset" aria-label="Put the face back">
+    <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+  </button>
+  <button id="shuffle" disabled>SHUFFLE</button>
+  <button class="round" id="flip" aria-label="Switch camera">
+    <svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><path d="M9 13a3 3 0 0 1 5.2-2"/><path d="M15 13a3 3 0 0 1-5.2 2"/></svg>
+  </button>
+  <button class="round" id="snap" aria-label="Save a photo">
+    <svg viewBox="0 0 24 24"><path d="M12 4v11"/><path d="M7 10l5 5 5-5"/><path d="M5 20h14"/></svg>
+  </button>
+</div>
+
+<div id="intro">
+  <div>
+    <h1>Face<br><span>Shuffle</span></h1>
+    <p>Point the camera at a face and press the button. The eyes, brows, nose and mouth swap places.</p>
+    <button id="go">Start camera</button>
+    <div id="err"></div>
+  </div>
+</div>
+
+<script type="module">
+import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+// MediaPipe face-mesh landmark indices for each feature ("L"/"R" are the subject's own left/right).
+const FEATURES = {
+  eyeL:   { pts: [263,249,390,373,374,380,381,382,362,398,384,385,386,387,388,466], pad: [0.55, 0.9] },
+  eyeR:   { pts: [33,7,163,144,145,153,154,155,133,173,157,158,159,160,161,246],   pad: [0.55, 0.9] },
+  browL:  { pts: [276,283,282,295,285,300,293,334,296,336],                       pad: [0.25, 0.9] },
+  browR:  { pts: [46,53,52,65,55,70,63,105,66,107],                               pad: [0.25, 0.9] },
+  nose:   { pts: [168,6,197,195,5,4,1,19,94,2,98,327,64,294,48,278,129,358,102,331], pad: [0.35, 0.2] },
+  mouth:  { pts: [61,146,91,181,84,17,314,405,321,375,291,409,270,269,267,0,37,39,40,185], pad: [0.3, 0.45] },
+};
+const NAMES = Object.keys(FEATURES);
+const CHEEKS = [205, 425, 151]; // skin samples: both cheeks and the forehead
+
+const $ = (id) => document.getElementById(id);
+const out = $("out"), ctx = out.getContext("2d");
+const video = $("cam");
+const src = document.createElement("canvas"), sctx = src.getContext("2d", { willReadFrequently: true });
+const tmp = document.createElement("canvas"), tctx = tmp.getContext("2d");
+
+let landmarker = null, stream = null, facing = "user";
+let boxes = null;            // smoothed feature boxes in pixels
+let perm = identity();       // feature i is drawn in slot perm[i]
+let rot = NAMES.map(() => 0);
+let from = { perm: identity(), rot: rot.slice() }, t0 = 0;
+const ANIM = 450;
+let skin = [190, 150, 130];
+let lastSeen = 0;
+
+function identity() { return NAMES.map((_, i) => i); }
+const status = (s) => { $("status").textContent = s; };
+
+$("go").onclick = async () => {
+  $("go").disabled = true; $("err").textContent = "";
+  try {
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error("This browser cannot open the camera here. Open the page over https.");
+    status("Opening camera…");
+    await openCamera();
+    $("intro").hidden = true; $("bar").hidden = false;
+    status("Loading face model…");
+    landmarker = await loadModel();
+    status("");
+    $("shuffle").disabled = false;
+  } catch (e) {
+    $("err").textContent = e.name === "NotAllowedError"
+      ? "Camera permission was refused. Allow it in the browser settings and reload."
+      : (e.message || String(e));
+    $("go").disabled = false;
+    $("intro").hidden = false; $("bar").hidden = true;
+  }
+};
+
+async function loadModel() {
+  const fileset = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+  const opts = (delegate) => ({
+    baseOptions: {
+      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+      delegate,
+    },
+    runningMode: "VIDEO", numFaces: 1,
+  });
+  try { return await FaceLandmarker.createFromOptions(fileset, opts("GPU")); }
+  catch { return await FaceLandmarker.createFromOptions(fileset, opts("CPU")); }
+}
+
+async function openCamera() {
+  stream?.getTracks().forEach((t) => t.stop());
+  stream = await navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: { facingMode: facing, width: { ideal: 960 }, height: { ideal: 720 } },
+  });
+  video.srcObject = stream;
+  await video.play();
+  out.classList.toggle("mirror", facing === "user");
+  boxes = null;
+  requestAnimationFrame(loop);
+}
+
+$("flip").onclick = async () => {
+  facing = facing === "user" ? "environment" : "user";
+  try { await openCamera(); } catch { facing = facing === "user" ? "environment" : "user"; await openCamera(); }
+};
+
+$("shuffle").onclick = () => {
+  from = current();
+  perm = derangement(NAMES.length);
+  rot = NAMES.map(() => (Math.random() - 0.5) * 0.6 + (Math.random() < 0.12 ? Math.PI : 0));
+  t0 = performance.now();
+  navigator.vibrate?.(20);
+};
+$("reset").onclick = () => { from = current(); perm = identity(); rot = NAMES.map(() => 0); t0 = performance.now(); };
+
+$("snap").onclick = () => {
+  const c = document.createElement("canvas");
+  c.width = out.width; c.height = out.height;
+  const x = c.getContext("2d");
+  if (facing === "user") { x.translate(c.width, 0); x.scale(-1, 1); }
+  x.drawImage(out, 0, 0);
+  const a = document.createElement("a");
+  a.download = `face-shuffle-${Date.now()}.png`;
+  a.href = c.toDataURL("image/png");
+  a.click();
+};
+
+// Every feature moves, so the shuffle always looks like something happened.
+function derangement(n) {
+  for (;;) {
+    const p = identity();
+    for (let i = n - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [p[i], p[j]] = [p[j], p[i]]; }
+    if (p.every((v, i) => v !== i)) return p;
+  }
+}
+
+// Where each feature is right now (mid-animation included), as a target-slot blend we can animate from.
+// Kept one level deep: pressing again mid-shuffle starts from where things are heading from, close enough.
+function current() {
+  const k = progress();
+  if (k >= 1) return { perm: perm.slice(), rot: rot.slice() };
+  return { perm: perm.slice(), rot: rot.slice(), blendFrom: { perm: from.perm, rot: from.rot }, k };
+}
+function progress() { return Math.min(1, (performance.now() - t0) / ANIM); }
+const ease = (k) => 1 - Math.pow(1 - k, 3);
+
+function slotCenter(state, i) {
+  // state may itself be mid-animation (when the button is pressed during a shuffle)
+  if (state.blendFrom) {
+    const a = slotCenter(state.blendFrom, i), b = boxes[state.perm[i]];
+    const k = ease(state.k);
+    return { x: a.x + (b.cx - a.x) * k, y: a.y + (b.cy - a.y) * k, r: rotOf(state.blendFrom, i) + (state.rot[i] - rotOf(state.blendFrom, i)) * k };
+  }
+  const b = boxes[state.perm[i]];
+  return { x: b.cx, y: b.cy, r: state.rot[i] };
+}
+const rotOf = (state, i) => state.blendFrom ? slotCenter(state, i).r : state.rot[i];
+
+function measure(lm, w, h) {
+  return NAMES.map((name) => {
+    const f = FEATURES[name];
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (const i of f.pts) {
+      const x = lm[i].x * w, y = lm[i].y * h;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+    const bw = (x1 - x0) * (1 + f.pad[0]), bh = Math.max((y1 - y0), (x1 - x0) * 0.25) * (1 + f.pad[1]);
+    return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, w: bw, h: bh };
+  });
+}
+
+function smooth(next) {
+  if (!boxes) return next;
+  return next.map((b, i) => {
+    const o = boxes[i], a = 0.55;
+    return { cx: o.cx + (b.cx - o.cx) * a, cy: o.cy + (b.cy - o.cy) * a, w: o.w + (b.w - o.w) * a, h: o.h + (b.h - o.h) * a };
+  });
+}
+
+function sampleSkin(lm, w, h) {
+  let r = 0, g = 0, b = 0, n = 0;
+  for (const i of CHEEKS) {
+    const x = Math.round(lm[i].x * w) - 4, y = Math.round(lm[i].y * h) - 4;
+    if (x < 0 || y < 0 || x + 8 > w || y + 8 > h) continue;
+    const d = sctx.getImageData(x, y, 8, 8).data;
+    for (let k = 0; k < d.length; k += 4) { r += d[k]; g += d[k + 1]; b += d[k + 2]; n++; }
+  }
+  if (n) {
+    const c = [r / n, g / n, b / n];
+    skin = skin.map((v, i) => v + (c[i] - v) * 0.2);
+  }
+}
+
+// Soft elliptical blob, unit circle scaled to the box.
+function softEllipse(c, cx, cy, w, h, fill, alpha) {
+  c.save();
+  c.translate(cx, cy); c.scale(w / 2, h / 2);
+  const g = c.createRadialGradient(0, 0, 0, 0, 0, 1);
+  g.addColorStop(0, fill(alpha)); g.addColorStop(0.6, fill(alpha)); g.addColorStop(1, fill(0));
+  c.fillStyle = g;
+  c.beginPath(); c.arc(0, 0, 1, 0, Math.PI * 2); c.fill();
+  c.restore();
+}
+
+function loop() {
+  if (!stream || video.readyState < 2) { requestAnimationFrame(loop); return; }
+  const w = video.videoWidth, h = video.videoHeight;
+  if (out.width !== w || out.height !== h) { out.width = src.width = w; out.height = src.height = h; }
+
+  sctx.drawImage(video, 0, 0, w, h);
+  ctx.drawImage(src, 0, 0);
+
+  if (landmarker) {
+    const res = landmarker.detectForVideo(video, performance.now());
+    const lm = res.faceLandmarks?.[0];
+    if (lm) {
+      boxes = smooth(measure(lm, w, h));
+      sampleSkin(lm, w, h);
+      lastSeen = performance.now();
+      if ($("status").textContent === "No face found") status("");
+    } else if (performance.now() - lastSeen > 600) {
+      boxes = null;
+      status("No face found");
+    }
+  }
+
+  if (boxes) drawShuffled();
+  requestAnimationFrame(loop);
+}
+
+function drawShuffled() {
+  const k = progress();
+  const state = { perm, rot, blendFrom: from, k };
+  const moved = NAMES.map((_, i) => slotCenter(state, i));
+  const anyMoved = moved.some((m, i) => Math.hypot(m.x - boxes[i].cx, m.y - boxes[i].cy) > 1 || Math.abs(m.r) > 0.01);
+  if (!anyMoved) return;
+
+  // 1. cover the original features with skin
+  const [r, g, b] = skin.map(Math.round);
+  for (const bx of boxes) softEllipse(ctx, bx.cx, bx.cy, bx.w * 1.15, bx.h * 1.2, (a) => `rgba(${r},${g},${b},${a})`, 1);
+
+  // 2. paste each feature, feathered, at its new place (brows and eyes first, mouth and nose on top)
+  for (const i of [2, 3, 0, 1, 4, 5]) {
+    const bx = boxes[i], m = moved[i];
+    const tw = Math.ceil(bx.w), th = Math.ceil(bx.h);
+    if (tw < 2 || th < 2) continue;
+    tmp.width = tw; tmp.height = th;
+    tctx.globalCompositeOperation = "source-over";
+    tctx.drawImage(src, bx.cx - tw / 2, bx.cy - th / 2, tw, th, 0, 0, tw, th);
+    tctx.globalCompositeOperation = "destination-in";
+    softEllipse(tctx, tw / 2, th / 2, tw, th, (a) => `rgba(0,0,0,${a})`, 1);
+    ctx.save();
+    ctx.translate(m.x, m.y); ctx.rotate(m.r);
+    ctx.drawImage(tmp, -tw / 2, -th / 2);
+    ctx.restore();
+  }
+}
+</script>
+</body>
+</html>
